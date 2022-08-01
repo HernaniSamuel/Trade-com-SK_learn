@@ -7,9 +7,10 @@ from time import time,  sleep
 from datetime import datetime
 from dateutil import tz
 
-API = IQ_Option('<e-mail>', '<senha>')
+API = IQ_Option('login', 'senha')
 API.connect()
 API.change_balance('PRACTICE')
+
 while True:
     if API.check_connect() == False:
         API.connect()
@@ -89,20 +90,7 @@ lr = linear_model.LinearRegression()
 lr.fit(X_train_scale, y_train)
 pred = lr.predict(X_test_scale)
 
-
-acerto = 0
-erro = 0
-for c in range(len(pred)):
-    a = X_test[c]['abertura']-pred[c]
-    b = X_test[c]['abertura']-y_test[c]
-    if a < 0 and b < 0 or a > 0 and b > 0:
-        acerto += 1
-
-print(f'Taxa de acertos de {acerto/884}%')
-
 cd = r2_score(y_test, pred)
-
-
 
 print(f'Coeficiente de determinação:{cd * 100:.2f}%')
 
