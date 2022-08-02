@@ -5,5 +5,3 @@ Usei a regressão linear da biblioteca SKLearn do python para tentar desvendar o
 No FOREX, é printada a resposta do algoritmo, ou seja, se ele acha que o gráfico vai descer ou subir.
 
 No programa que interage com as opções binárias, são feitas 100 operações consecutivas e são printados na tela os resultados obtidos juntamente ao número da operação atual (se é a 5 operação por exemplo)
-
-Irei postar um vídeo no youtube mostrando o código em ação devido a dificuldade extrema para instalar a API da IQ Option, que pode vir a dificultar a execução do código por parte de quem não a tem instalada.
