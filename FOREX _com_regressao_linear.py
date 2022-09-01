@@ -1,25 +1,10 @@
-import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
-from sklearn import linear_model
-from sklearn.metrics import r2_score
 from iqoptionapi.stable_api import IQ_Option
 from time import time,  sleep
 from datetime import datetime
 from dateutil import tz
-
-API = IQ_Option('login', 'senha')
-API.connect()
-API.change_balance('PRACTICE')
-
-while True:
-    if API.check_connect() == False:
-        API.connect()
-        conectar = 'Desconectado'
-    else:
-        conectar = 'Conectado'
-        break
-
-    sleep(1)
+from sklearn.preprocessing import MinMaxScaler
+from sklearn import linear_model
+from sklearn.metrics import r2_score
 
 
 def timestamp_converter(x):
@@ -29,80 +14,121 @@ def timestamp_converter(x):
     return str(hora.astimezone(tz.gettz('America/Sao Paulo')))[:-6]
 
 
-velas = []
-tempo = time()
-t = 3600
+def calcular_direcao():
+    global velas, paridade, op
 
-for i in range(3):
-    X = API.get_candles('EURUSD', t, 1000, tempo)
-    velas = X+velas
-    tempo = int(X[0]['from'])-1
+    labels = []
+    minima = []
+    volume = []
+    mm5 = []
 
-for c in range(0, len(velas)):
-    velas[c]['from'] = timestamp_converter(velas[c]['from'])
-df = pd.DataFrame(velas)
-df.rename(columns={'max': 'maxima', 'min': 'minima', 'open': 'abertura', 'close': 'fechamento', 'from': 'tempo', }, inplace=True)
+    c = 0
+    while True:
+        if c >= 4:
+            media5 = (velas[c]['close'] + velas[c - 1]['close'] + velas[c - 2]['close'] + velas[c - 3]['close'] +
+                      velas[c - 4]['close']) / 5
+            minima.append(velas[c]['min'])
+            volume.append(velas[c]['volume'])
+            mm5.append(media5)
+            labels.append(velas[c]['close'])
+        if c == 2999:
+            break
+        c += 1
 
-df['tempo'] = pd.to_datetime(df['tempo'], format='%Y-%m-%d')
+    features = []
+    for i in range(0, 2996):
+        a = [minima[i], volume[i], mm5[i]]
+        features.append(a)
 
-df['mm5d'] = df['fechamento'].rolling(5).mean()
-df['mm21d'] = df['fechamento'].rolling(21).mean()
-df['mm50d'] = df['fechamento'].rolling(50).mean()
+    xtrain = []
+    ytrain = []
+    xtest = []
+    ytest = []
 
-df['fechamento'] = df['fechamento'].shift(-1)
+    for c in range(0, 2089):
+        xtrain.append(features[c])
+        ytrain.append(labels[c])
 
-df.dropna(inplace=True)
+    for c in range(0, 907):
+        xtest.append(features[2089 + c])
+        ytest.append(labels[2089 + c])
 
-df = df.reset_index(drop=True)
+    scaler = MinMaxScaler()
+    X_train_scale = scaler.fit_transform(xtrain)
+    X_test_scale = scaler.transform(xtest)
 
-qtd_linhas = len(df)
+    lr = linear_model.LinearRegression()
+    lr.fit(X_train_scale, ytrain)
+    pred = lr.predict(X_test_scale)
+    prev = pred[-1]
+    cd = r2_score(ytest, pred)
+    print(f'Coeficiente de determinação [traduzido] em {(cd*100-99)*100}%')
 
-qtd_linhas_treino = round(.70 * qtd_linhas)
-qtd_linhas_teste = qtd_linhas - qtd_linhas_treino
-qtd_linhas_validacao = qtd_linhas - 1
-
-info = (
-    f"linhas treino= 0:{qtd_linhas_treino}"
-    f" linhas teste= {qtd_linhas_treino}:{qtd_linhas_treino + qtd_linhas_teste -1}"
-    f" linhas validação= {qtd_linhas_validacao}"
-)
-
-features = df.drop(['tempo', 'fechamento'], 1)
-labels = df['fechamento']
-
-features_list = ('abertura', 'maxima', 'minima', 'volume', 'mm5d', 'mm21d', 'mm50d')
-
-features = df.loc[:, ['mm50d', 'mm21d', 'mm5d', 'minima', 'maxima', 'volume', 'abertura']]
-
-X_train = features[:qtd_linhas_treino]
-X_test = features[qtd_linhas_treino:qtd_linhas_treino + qtd_linhas_teste - 1]
-
-y_train = labels[:qtd_linhas_treino]
-y_test = labels[qtd_linhas_treino:qtd_linhas_treino + qtd_linhas_teste - 1]
+    if prev > velas[-1]['close']:
+        op = 1
+    if prev < velas[-1]['close']:
+        op = -1
 
 
-scaler = MinMaxScaler()
-X_train_scale = scaler.fit_transform(X_train)
-X_test_scale = scaler.transform(X_test)
-print(len(X_train), len(y_train))
-print(len(X_test), len(y_test))
-lr = linear_model.LinearRegression()
-lr.fit(X_train_scale, y_train)
-pred = lr.predict(X_test_scale)
+def pegar_velas(paridade):
+    global velas
+    tempo = time()
+    t = 3600
+    for i in range(3):
+        X = API.get_candles(paridade, t, 1000, tempo)
+        velas = X + velas
+        tempo = int(X[0]['from']) - 1
 
-cd = r2_score(y_test, pred)
 
-print(f'Coeficiente de determinação:{cd * 100:.2f}%')
+def operar(instrument_type, instrument_id, valor, side, take_profit, stop_lose, multiplicador):
+    type = "market"
+    limit_price = None
+    stop_price = None
+    stop_lose_kind = "percent"
+    stop_lose_value = stop_lose
+    take_profit_kind = "percent"
+    take_profit_value = take_profit
+    use_trail_stop = False
+    auto_margin_call = False
+    use_token_for_commission = False
 
-valor_novo = features.tail(1)
+    check, order_id = API.buy_order(instrument_type=instrument_type, instrument_id=instrument_id,
+                                             side=side, amount=valor, leverage=multiplicador,
+                                             type=type, limit_price=limit_price, stop_price=stop_price,
+                                             stop_lose_value=stop_lose_value, stop_lose_kind=stop_lose_kind,
+                                             take_profit_value=take_profit_value, take_profit_kind=take_profit_kind,
+                                             use_trail_stop=use_trail_stop, auto_margin_call=auto_margin_call,
+                                             use_token_for_commission=use_token_for_commission)
 
-previsao = scaler.transform(valor_novo)
 
-pred = lr.predict(previsao)
+if __name__ == '__main__':
+    API = IQ_Option('email', 'senha')
+    API.connect()
+    API.change_balance('PRACTICE')
 
-print(pred, velas[-1]['close'])
+    instrument_type = "forex"
+    paridade = 'EURUSD'
+    op = 0
 
-if pred > velas[-1]['close']:
-    print('\033[1;32mCIMA!')
-if pred < velas[-1]['close']:
-    print('\033[1;31mBAIXO!')
+    while True:
+        if not API.check_connect():
+            API.connect()
+            print('Desconectado')
+        else:
+            print('Conectado')
+            break
+        sleep(1)
+
+    velas = []
+    pegar_velas(paridade)
+
+    del velas[0]
+    X = API.get_candles(paridade, 3600, 1, time())
+    velas = velas + X
+    calcular_direcao()
+    if op == 1:
+        operar(instrument_type, paridade, API.get_balance(), 'buy', 1, 95, 100)#('forex', paridade, valor de operação, direção, take profit, stop loss, multiplicador)
+        print('comprar')
+    if op == -1:
+        operar(instrument_type, paridade, API.get_balance(), 'sell', 1, 95, 100)
+        print('vender')
