@@ -7,7 +7,6 @@ from sklearn import linear_model
 from sklearn.metrics import r2_score
 
 
-#Conversor de tempo
 def timestamp_converter(x):
     hora = datetime.strptime(datetime.utcfromtimestamp(x).strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
     hora = hora.replace(tzinfo=tz.gettz('GMT'))
@@ -15,7 +14,6 @@ def timestamp_converter(x):
     return str(hora.astimezone(tz.gettz('America/Sao Paulo')))[:-6]
 
 
-#função de operação automática
 def operacao(par, entrada, direcao, timeframe):
     global l, w
     _, id = API.buy_digital_spot(par, entrada, direcao, timeframe)
@@ -26,55 +24,20 @@ def operacao(par, entrada, direcao, timeframe):
 
             if status:
                 if lucro > 0:
-                    pass
+                    return 1
                 else:
-                    pass
+                    return -1
                 break
 
 
-#informações para login
-API = IQ_Option('<e-mail>', '<senha>')
-API.connect()
-API.change_balance('PRACTICE')
+def calcular_direcao():
+    global velas, paridade, op
 
-#conectando na API
-while True:
-    if API.check_connect() == False:
-        API.connect()
-        print('Desconectado')
-    else:
-        print('Conectado')
-        break
-    sleep(1)
-
-#definições de mercado e preço de operações
-valor_operacao = 4
-paridade = 'EURUSD-OTC'
-
-#Pegando valor em conta antes do inicio das operações e definindo variáveis para pegar o valor mínimo e o valor máximo atingidos
-valor_inicial = API.get_balance()
-minimo = 0
-maximo = 0
-
-#inicio do processo
-for contador in range(100):
-    #listas para fornecimento de informação para a regressão linear
     labels = []
     minima = []
     volume = []
     mm5 = []
 
-    #Pegando dados das velas
-    velas = []
-    tempo = time()
-    t = 60
-
-    for i in range(3):
-        X = API.get_candles(paridade, t, 1000, tempo)
-        velas = X+velas
-        tempo = int(X[0]['from'])-1
-
-    #Adicionando dados às listas
     c = 0
     while True:
         if c >= 4:
@@ -93,7 +56,7 @@ for contador in range(100):
         a = [minima[i], volume[i], mm5[i]]
         features.append(a)
 
-    #separando listas de dados de treinamentos e listas de dados de teste
+    # separando listas de dados de treinamentos e listas de dados de teste
     xtrain = []
     ytrain = []
     xtest = []
@@ -104,49 +67,76 @@ for contador in range(100):
         ytrain.append(labels[c])
 
     for c in range(0, 907):
-        xtest.append(features[2089+c])
-        ytest.append(labels[2089+c])
+        xtest.append(features[2089 + c])
+        ytest.append(labels[2089 + c])
 
-    #transformando dados
+    # transformando dados
     scaler = MinMaxScaler()
     X_train_scale = scaler.fit_transform(xtrain)
     X_test_scale = scaler.transform(xtest)
 
-    #criando, treinando e testando modelo de regressão linear
+    # criando, treinando e testando modelo de regressão linear
     lr = linear_model.LinearRegression()
     lr.fit(X_train_scale, ytrain)
     pred = lr.predict(X_test_scale)
     prev = pred[-1]
     cd = r2_score(ytest, pred)
+    print(f'Coeficiente de determinação em {cd*100:.2f}%')
 
-    #fazendo as operações com base na última previsão
     if prev > velas[-1]['close']:
-        operacao(paridade, valor_operacao, 'call', 1)
+        op = 1
     if prev < velas[-1]['close']:
-        operacao(paridade, valor_operacao, 'put', 1)
+        op = -1
 
-    valor_atual = API.get_balance()
-    print(contador+1, end=' ')
 
-    #pegando valor máximo e minimo atingidos durante as repetições
-    if valor_atual < minimo:
-        minimo = valor_atual
-    if valor_atual > maximo:
-        maximo = valor_atual
+def pegar_velas(paridade):
+    global velas
+    tempo = time()
+    t = 60
+    for i in range(3):
+        X = API.get_candles(paridade, t, 1000, tempo)
+        velas = X + velas
+        tempo = int(X[0]['from']) - 1
 
-    #Condicionais que freiam a repetição
-    if API.check_connect() == False:
-        print('\n\033[1;31mConexão perdida!')
-        break
-    if valor_atual >= valor_inicial + 20:
-        print('\n\033[1;32mTake Profit atingido!')
-        break
-    if valor_atual <= valor_inicial-valor_operacao*10:
-        print('\n\033[1;31mStop Loss!\033[m')
-        break
 
-#informações obtidas das operações feitas
-print(f'Número de operações feitas: {contador + 1}')
-print(f'Valor de início: R${valor_inicial}')
-print(f'mínima de R${minimo}, máxima de R${maximo}')
-print(f'Valor após as operações: R${valor_atual}')
+if __name__ == '__main__':
+    API = IQ_Option('email', 'senha')
+    API.connect()
+    API.change_balance('PRACTICE')
+    paridade = 'EURUSD'
+    op = 0
+    resultado = 0
+    valor_inicial = API.get_balance()
+    while True:
+        if not API.check_connect():
+            API.connect()
+            print('Desconectado')
+        else:
+            print('Conectado')
+            break
+        sleep(1)
+
+    velas = []
+    pegar_velas(paridade)
+
+    while True:
+        del velas[0]
+        X = API.get_candles(paridade, 60, 1, time())
+        velas = velas + X
+        calcular_direcao()
+        if op == 1:
+            resultado = operacao(paridade, 4, 'call', 1)
+        if op == -1:
+            resultado = operacao(paridade, 4, 'put', 1)
+
+        if resultado == 1:
+            print(f'\033[1;32m{timestamp_converter(X[0]["from"])}')
+        if resultado == -1:
+            print(f'\033[1;31m{timestamp_converter(X[0]["from"])}')
+
+        if not API.check_connect():
+            print('\n\033[1;31mConexão perdida!')
+            break
+        if API.get_balance() >= valor_inicial:
+            print('\n\033[1;32mTake Profit atingido!')
+            break
